@@ -1,6 +1,7 @@
 from scipy.spatial import distance as dist
 from imutils.video import VideoStream
 from imutils import face_utils
+import imutils
 import numpy as np
 import os
 import datetime
@@ -10,6 +11,9 @@ import dlib
 import cv2
 import pygame
 import tkinter 
+import PIL 
+from PIL import ImageTk
+
 
 class SleepDetectorApp:
         def __init__(self, tk_window):
@@ -21,8 +25,17 @@ class SleepDetectorApp:
             # Map used by all layers of the app: Model, View and  Controller to work with data
             self.drowsData = {'EAR' : 0.0, 'ETC' : 0.0, 'ETO' : 0.0, 'BPM' : 0.0, 'DBPM' : 0.0,
                               'ATCPM' : 0.0, 'DATCPM' : 0.0, 'MAXTCPM' : 0.0, 'MINTCPM' : 0.0, 'DLEVEL' : 'LOW'} 
-            # Create GUI and start the application
+            # Delay in miliseconds for how often image frame should be grabbed and calc performed
+            self.delay = 15
+            # Create video stream for getting images
+            self.videoStream = VideoStream().start()
+            # Give camera sensor time to warm up
+            time.sleep(1.0)
+            # Create the view
             self.create_view()
+            # Call update function to start getting video frames
+            self.update()
+            # Start the app main loop
             self.window.mainloop()
 
         def create_view(self):
@@ -32,7 +45,7 @@ class SleepDetectorApp:
             # Make the application quitable by pressing Escape key
             self.window.bind("<Escape>", quit)
             # Make room for video stream by creating a canvas
-            self.videoOut = tkinter.Canvas(self.window, width = 300, height = 300, bd =4, bg = "blue", relief = tkinter.RAISED)
+            self.videoOut = tkinter.Canvas(self.window, width = 300, height = 300, bd =4,relief = tkinter.RAISED)
             self.videoOut.place(x = 250, y = 90)
             # Create application title font
             self.titleFont = ('times', 40, 'bold')
@@ -134,6 +147,17 @@ class SleepDetectorApp:
             self.datcpm.set('{:.2f}'.format(self.drowsData['DATCPM']))
             self.maxtcpm.set('{:.2f}'.format(self.drowsData['MAXTCPM']))
             self.mintcpm.set('{:.2f}'.format(self.drowsData['MINTCPM']))
+
+        def update(self):
+            frame = self.videoStream.read()
+            frame = imutils.resize(frame, width = 310, height = 310)
+            image = PIL.Image.fromarray(frame)
+            image = image.resize((300,300))
+            self.photo = PIL.ImageTk.PhotoImage(image)
+            self.videoOut.create_image(0, 0, image = self.photo, anchor = tkinter.NW)
+            # Make sure we keep getting the frames every 15 ms
+            self.window.after(self.delay, self.update)
+
 
 
 # Create a window and pass it to Sleep detector application
