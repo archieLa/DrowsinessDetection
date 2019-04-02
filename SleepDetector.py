@@ -20,7 +20,7 @@ from PIL import ImageTk
 class WarningAnnouncer:
     def __init__(self, args):
         pygame.mixer.init()
-        pygame.mixer.music.load("warning.wav")
+        pygame.mixer.music.load(args['warning_sound'])
         self.alreadyTrigerred = False
 
     def warn(self):
