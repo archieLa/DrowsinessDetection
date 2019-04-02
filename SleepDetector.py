@@ -41,7 +41,7 @@ class DrowsAnalyst:
         self.prevBlinkCounter = 0.0
         self.minuteCompleted = False
         self.currentMaxEyesClosed = 0.0
-        self.currentMinEyesClosed = 1.0
+        self.currentMinEyesClosed = 0.0
         self.prevMaxEyesClosed = 0.0
         self.prevMinEyesClosed = 0.0
         self.timeEyesClosed = 0.0
@@ -126,13 +126,18 @@ class DrowsAnalyst:
         if (ear < self.EAR_THRESH):    # User has closed eyes
             if (self.eyesClosed == False):  # Previously user had eyes opened
                 self.timeStartEyesClosed = dt.datetime.now() #Mark the time of when user closed the eyes  
-                self.eyesClosed = True 
+                self.eyesClosed = True
+                # We also want to include the time between last eyes time opened and now closed
+                # The assumption we are making is that if the eyes were previously opened and now are closed
+                # then during the time between open and closed they were opened so it is not completely real time
+                # but it is good enough approx
+                self.timeDiffInSec = ((self.timeStartEyesClosed - self.timeStartEyesOpen).microseconds) / 1e6
+                drowsData['ETO'] += self.timeDiffInSec
             elif (self.eyesClosed == True):
                 timeNow = dt.datetime.now()
-                timeDiffInSec = (timeNow - self.timeStartEyesClosed).microseconds / 1e6
-                print(timeDiffInSec)
+                self.timeDiffInSec = ((timeNow - self.timeStartEyesClosed).microseconds) / 1e6
                 self.timeStartEyesClosed = timeNow
-                self.timeEyesClosed += timeDiffInSec
+                self.timeEyesClosed += self.timeDiffInSec
                 self.check_if_user_asleep(self.timeEyesClosed)
                 drowsData['ETC'] = self.timeEyesClosed # Provide the time eyes have been closed
                 drowsData['ETO'] = 0.0
@@ -142,12 +147,19 @@ class DrowsAnalyst:
                 self.isUserAsleep = False
                 self.currentBlinkCounter += 1 # count the blink
                 self.timeStartEyesOpen = dt.datetime.now() # Mark the time of when user opened the eyes
+                # We also want to include the time between last eyes time closed and now opened
+                # The assumption we are making is that if the eyes were previously closed and now are open
+                # then during the time between closed and open they were opened so it is not completely real time
+                # Bit in this case it is good enough approx
+                self.timeDiffInSec = ((self.timeStartEyesOpen - self.timeStartEyesClosed).microseconds) / 1e6
+                self.timeEyesClosed += self.timeDiffInSec
+                drowsData['ETC'] = self.timeEyesClosed                        
                 self.calc_eyes_closed_stats() # User has opened the eyes it is time now to sum up statistics for when eyes were closed
             elif (self.eyesClosed == False): # User has opened eyes and had them opened before
                 timeNow = dt.datetime.now()  # Get current time
-                timeDiffInSec = (timeNow - self.timeStartEyesOpen).microseconds / 1e6  # Increase the time eyes have been opened
+                self.timeDiffInSec = (timeNow - self.timeStartEyesOpen).microseconds / 1e6  # Increase the time eyes have been opened
                 self.timeStartEyesOpen = timeNow
-                drowsData['ETO'] += timeDiffInSec   # Provide the time eyes have been opened
+                drowsData['ETO'] += self.timeDiffInSec   # Provide the time eyes have been opened
                 drowsData['ETC'] = 0.0  # Eyes are not closed so set that time to zero
                 self.timeEyesClosed = 0.0
         
@@ -176,7 +188,7 @@ class DrowsAnalyst:
             self.prevMaxEyesClosed = self.currentMaxEyesClosed
             self.currentMaxEyesClosed = 0.0
             self.prevMinEyesClosed = self.currentMinEyesClosed
-            self.currentMinEyesClosed = 1.0
+            self.currentMinEyesClosed = 0.0
             # Save current time to restart counting another minute
             self.oneMinuteTimerStart = dt.datetime.now()
             self.minuteCompleted = False
@@ -217,7 +229,8 @@ class DrowsAnalyst:
         # Determine if the time eyes were closed now was max or min
         if (self.timeEyesClosed > self.currentMaxEyesClosed):
             self.currentMaxEyesClosed = self.timeEyesClosed
-        elif (self.timeEyesClosed < self.currentMinEyesClosed):
+        elif ((self.timeEyesClosed < self.currentMinEyesClosed and self.timeEyesClosed != 0.0)
+              or self.currentMinEyesClosed == 0.0):
             self.currentMinEyesClosed = self.timeEyesClosed
 
 class SleepDetectorApp: 
