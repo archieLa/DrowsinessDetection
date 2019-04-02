@@ -15,6 +15,28 @@ import PIL
 from PIL import ImageTk
 
 
+
+
+class WarningAnnouncer:
+    def __init__(self, args):
+        pygame.mixer.init()
+        pygame.mixer.music.load("warning.wav")
+        self.alreadyTrigerred = False
+
+    def warn(self):
+        # Only need to start the warning sound once
+        # And then it will be on untill it is stopped
+        # Don't want to retrigger multiple times 
+        if (self.alreadyTriggered == False):
+            print("Warning triggered")
+            pygame.mixer.music.play(-1)
+            self.alreadyTriggered = True            
+
+    def stop_warning(self):
+        pygame.mixer.music.stop()
+        self.alreadyTriggered = False    
+
+
 class DrowsAnalyst:
     def __init__(self, args, updateInterMiliSec):
         # Timer interval of frame updates in sec
@@ -249,7 +271,9 @@ class SleepDetectorApp:
         self.videoStream = VideoStream().start()
         # Create instance of drows utils used to analyze data
         self.drowsAnalyst = DrowsAnalyst(args, self.delay)
-        # Give camera sensor time to warm up
+        # Create instance of warning announcer used to output warning
+        self.warnAnnouncer = WarningAnnouncer(args)
+        # Give camera sensor time to warm up and music to be loaded
         time.sleep(1.0)
         # Create the view
         self.create_view()
@@ -372,6 +396,13 @@ class SleepDetectorApp:
         frame = self.videoStream.read()
         frame = self.drowsAnalyst.provide_drows_data(frame, self.drowsData)
         self.update_view()
+        
+        # Determine if we need to trigger the warning
+        if (self.drowsData['DLEVEL'] == 'EXTREME'):
+            self.warnAnnouncer.warn()
+        else:
+            self.warnAnnouncer.stop_warning()
+        
         image = PIL.Image.fromarray(frame)
         image = image.resize((300,300))
         self.photo = PIL.ImageTk.PhotoImage(image)
@@ -384,6 +415,7 @@ class SleepDetectorApp:
 parser = argparse.ArgumentParser()
 parser.add_argument("-c", "--cascade", required = True, help = "path to Haar cascade XML")
 parser.add_argument("-p", "--shape-predictor", required = True, help = "path to facial landmark predictor data")
+parser.add_argument("-w", "--warning-sound", required = False, help = "path to warning sound")
 # Parsed arguments
 args = vars(parser.parse_args())
 
