@@ -89,6 +89,10 @@ class DrowsAnalyst:
 
         return ear
 
+    def set_ear_thresh(self, ear_thresh):
+        self.EAR_THRESH = ear_thresh
+        print("New EAR thresh: {:.4f}".format(self.EAR_THRESH))
+
     def provide_drows_data(self, frame, drowsData):
         
         # If this is the first sample 
@@ -117,7 +121,6 @@ class DrowsAnalyst:
             drowsData['DATCPM'] = 0.0
             drowsData['MAXTCPM'] = 0.0
             drowsData['MINTCPM'] = 0.0
-            drowsData['DLEVEL'] = 'LOW'
             return frame
 
         # Face was detected so we can proceed
@@ -232,6 +235,7 @@ class DrowsAnalyst:
         return self.minuteCompleted
     
     def check_if_user_asleep(self, timeDiffInSec):
+        
         if (timeDiffInSec >= self.ASLEEP_THRESH):
             self.isUserAsleep = True
         else:
@@ -266,7 +270,10 @@ class SleepDetectorApp:
         self.drowsData = {'EAR' : 0.0, 'ETC' : 0.0, 'ETO' : 0.0, 'BPM' : 0.0, 'DBPM' : 0.0,
                               'ATCPM' : 0.0, 'DATCPM' : 0.0, 'MAXTCPM' : 0.0, 'MINTCPM' : 0.0, 'DLEVEL' : 'LOW'} 
         # Delay in miliseconds for how often image frame should be grabbed and calc performed
-        self.delay = 5
+        self.delay = 10
+        # Store ear
+        self.EARThresh = 0.0
+        self.prevEARThresh = 0.0
         # Create video stream for getting images (controller)
         self.videoStream = VideoStream().start()
         # Create instance of drows utils used to analyze data
@@ -334,49 +341,65 @@ class SleepDetectorApp:
         # Eye aspect ratio
         self.earLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "EAR")
         self.earLabel.place(x = 10, y = 150)
-        self.earValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.ear, anchor = tkinter.W, width = 6)
+        self.earValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.ear, anchor = tkinter.W, width = 8)
         self.earValue.place(x = 120, y = 150)
         # Eyes time closed
         self.etcLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "ETC")
         self.etcLabel.place(x = 10, y = 190)
-        self.etcValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.etc, anchor = tkinter.W, width = 6)
+        self.etcValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.etc, anchor = tkinter.W, width = 8)
         self.etcValue.place(x = 120, y = 190)
         self.etoLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "ETO")
         # Eyes time open
         self.etoLabel.place(x = 10, y = 230)
-        self.etoValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.eto, anchor = tkinter.W, width = 6)
+        self.etoValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.eto, anchor = tkinter.W, width = 8)
         self.etoValue.place(x = 120, y = 230)
+        # For debugging purposes create user input box so we could modify EAR threshold
+        self.earThreshStr = tkinter.StringVar()
+        self.earThreshReadInput = tkinter.Entry(self.window, width = 8, textvariable = self.earThreshStr)
+        self.earThreshReadInput.place(x = 120, y = 275)
+        self.setButton = tkinter.Button(self.window, text = "Set EAR", command = self.read_ear)
+        self.setButton.place(x = 10, y = 270)  
         # Statistics data
         # Blinks per minute
         self.bpmLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "BPM")
         self.bpmLabel.place(x = 560, y = 150)
-        self.bpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.bpm, anchor = tkinter.W, width = 6)
+        self.bpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.bpm, anchor = tkinter.W, width = 8)
         self.bpmValue.place(x = 670, y = 150)
         # Delta blinks per minute -> current - previous
         self.dbpmLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "DBPM")
         self.dbpmLabel.place(x = 560, y = 190)
-        self.dbpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.dbpm, anchor = tkinter.W, width = 6)
+        self.dbpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.dbpm, anchor = tkinter.W, width = 8)
         self.dbpmValue.place(x = 670, y = 190)
         # Average time closed during blink in last minute
         self.atcpmLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "ATCPM")
         self.atcpmLabel.place(x = 560, y = 230)
-        self.atcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.atcpm, anchor = tkinter.W, width = 6)
+        self.atcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.atcpm, anchor = tkinter.W, width = 8)
         self.atcpmValue.place(x = 670, y = 230)
         # Delta average time closed during blink -> current - previous
         self.datcpmLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "DATCPM")
         self.datcpmLabel.place(x = 560, y = 270)
-        self.datcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.datcpm, anchor = tkinter.W, width = 6)
+        self.datcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.datcpm, anchor = tkinter.W, width = 8)
         self.datcpmValue.place(x = 670, y = 270)
         # Longest time eyes were closed in last minute
         self.maxtcpmLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "MAXTCPM")
         self.maxtcpmLabel.place(x = 560, y = 310)
-        self.maxtcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.maxtcpm, anchor = tkinter.W, width = 6)
+        self.maxtcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.maxtcpm, anchor = tkinter.W, width = 8)
         self.maxtcpmValue.place(x = 670, y = 310)
         # Min time eyes were closed in last minute
         self.mintcpmLabel = tkinter.Label(self.window, font = self.dataTextFont, text = "MINTCPM")
         self.mintcpmLabel.place(x = 560, y = 350)
-        self.mintcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.mintcpm, anchor = tkinter.W, width = 6)
+        self.mintcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.mintcpm, anchor = tkinter.W, width = 8)
         self.mintcpmValue.place(x = 670, y = 350)
+    
+    def read_ear(self):
+        ear = 0.0
+        try:
+            ear = float(self.earThreshStr.get())
+        except ValueError:
+            print("Failed str to float conversion")
+
+        if (ear != 0.0):
+            self.EARThresh = ear
 
     def update_view(self):
         self.drowsLevelFrame.config(bg = self.drowsLevelToDispColors[self.drowsData['DLEVEL']])
@@ -393,6 +416,11 @@ class SleepDetectorApp:
         self.mintcpm.set('{:.4f}'.format(self.drowsData['MINTCPM']))
 
     def update(self):
+         
+        if (self.EARThresh != 0.0 and np.isclose(self.EARThresh, self.prevEARThresh) == False):
+            self.drowsAnalyst.set_ear_thresh(self.EARThresh)
+            self.prevEARThresh = self.EARThresh
+            
         frame = self.videoStream.read()
         frame = self.drowsAnalyst.provide_drows_data(frame, self.drowsData)
         self.update_view()
