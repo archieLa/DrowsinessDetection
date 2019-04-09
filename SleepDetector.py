@@ -15,32 +15,31 @@ import PIL
 from PIL import ImageTk
 
 
-
-
 class WarningAnnouncer:
     def __init__(self, args):
         pygame.mixer.init()
+        print("Loading the warning sound to play")
         pygame.mixer.music.load(args['warning_sound'])
-        self.alreadyTrigerred = False
+        self.alreadyTriggered = False
 
     def warn(self):
         # Only need to start the warning sound once
         # And then it will be on untill it is stopped
         # Don't want to retrigger multiple times 
         if (self.alreadyTriggered == False):
-            print("Warning triggered")
+            print("Warning sound triggered - user asleep")
             pygame.mixer.music.play(-1)
             self.alreadyTriggered = True            
 
     def stop_warning(self):
-        pygame.mixer.music.stop()
-        self.alreadyTriggered = False    
+        if (self.alreadyTriggered == True):
+            print("Warning sound stopped")
+            pygame.mixer.music.stop()
+            self.alreadyTriggered = False    
 
 
 class DrowsAnalyst:
     def __init__(self, args, updateInterMiliSec):
-        # Timer interval of frame updates in sec
-        self.timeInter = updateInterMiliSec/1000
         print("Setting up face and landmark detectors")
         # Set up face detector
         self.detector = cv2.CascadeClassifier(args["cascade"])
@@ -48,55 +47,58 @@ class DrowsAnalyst:
         self.predictor = dlib.shape_predictor(args["shape_predictor"])
         # Set up constants
         # EAR threshold to determine if eyes are closed
-        self.EAR_THRESH = 0.22
+        self.earThresh = 0.20
         # Threshold to determine if user has fallen asleep sec
-        self.ASLEEP_THRESH = 5
+        self.asleepThresh = 3
         # Use imutils to get array indexes of start and end of each eye
         (self.lEyeStart, self.lEyeEnd) = face_utils.FACIAL_LANDMARKS_IDXS["left_eye"]
         (self.rEyeStart, self.rEyeEnd) = face_utils.FACIAL_LANDMARKS_IDXS["right_eye"]
         # Helper variables
+        self.firstFrame = True
         self.eyesClosed = False
         self.isUserAsleep = False
-        self.timeStartEyesOpen = dt.datetime.now()
-        self.timeStartEyesClosed = dt.datetime.now()
+        self.minuteCompleted = False
+        self.didUserFallAsleep = False
+        self.didUserFallAsleep = False
         self.currentBlinkCounter = 0.0
         self.prevBlinkCounter = 0.0
-        self.minuteCompleted = False
         self.currentMaxEyesClosed = 0.0
         self.currentMinEyesClosed = 0.0
         self.prevMaxEyesClosed = 0.0
         self.prevMinEyesClosed = 0.0
         self.timeEyesClosed = 0.0
         self.currentSumEyesClosed = 0.0
-        self.prevSumEyesClosed = 0.0
-        self.firstFrame = True
+        self.prevSumEyesClosed = 0.0        
         self.minuteCounter = 0.0
+        self.timeStartEyesOpen = dt.datetime.now()
+        self.timeStartEyesClosed = dt.datetime.now()
+        self.prevDrowsLevel = 'LOW'
     
     def ear_calc(self, eye):
         # Compute euclidean distance between sets of vertical
         # points indicating eyes from the facial landmark
         # Based on the facial landmark we know which points indicate eyes
         # exactly
-
         ver_dist1 = dist.euclidean(eye[1], eye[5])
         ver_dist2 = dist.euclidean(eye[2], eye[4])
 
         # Compute euclidean distance for horizontal point of the eye
         hor_dist = dist.euclidean(eye[0], eye[3])
 
-        # Now calculate EAR
+        # Now calculate EAR - Eye Aspect Ratio
         ear = (ver_dist1 + ver_dist2) / (2.0 * hor_dist)
 
         return ear
 
-    def set_ear_thresh(self, ear_thresh):
-        self.EAR_THRESH = ear_thresh
-        print("New EAR thresh: {:.4f}".format(self.EAR_THRESH))
+    def set_ear_thresh(self, newEarThresh):
+        print("New EAR thresh: {:.4f}".format(self.earThresh))
+        # Set received EAR thresh as new thresh to check against
+        self.earThresh = newEarThresh
+        
 
     def provide_drows_data(self, frame, drowsData):
-        
         # If this is the first sample 
-        if (self.firstFrame == True):   # Frame received for the first time so we want to save the time, this should only execute once
+        if (self.firstFrame == True):   # Frame received for the first time so we want to save the time, this should only executed once
             self.oneMinuteTimerStart = dt.datetime.now()
             self.firstFrame = False
         
@@ -105,13 +107,14 @@ class DrowsAnalyst:
         # Convert received frame to gray scale
         gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
         # Use detector to detect faces in the image
-        # Please note that there should be only one face detected
+        # Note that there should be only one face detected
         # when the device is used in the vehicle (only one driver)
-        # In case we can't detect the face we clear all the data
+        # In case we can't detect the face we clear all the displayed data
         faces = self.detector.detectMultiScale(gray, scaleFactor = 1.1, minNeighbors = 5,
                                           minSize = (30,30), flags = cv2.CASCADE_SCALE_IMAGE)
         # If face was not detected zero out the data and return unmodified video frame
         if (len(faces) == 0):
+            print("Face not detected in video stream")
             drowsData['EAR'] = 0.0
             drowsData['ETC'] = 0.0
             drowsData['ETO'] = 0.0
@@ -148,9 +151,9 @@ class DrowsAnalyst:
         cv2.drawContours(frame, [rightEyeHull], -1, (255, 0, 0), 1)
         
         # Find if eyes are closed
-        if (ear < self.EAR_THRESH):    # User has closed eyes
+        if (ear < self.earThresh):    # User has closed eyes
             if (self.eyesClosed == False):  # Previously user had eyes opened
-                self.timeStartEyesClosed = dt.datetime.now() #Mark the time of when user closed the eyes  
+                self.timeStartEyesClosed = dt.datetime.now() # Mark the time of when user closed the eyes  
                 self.eyesClosed = True
                 # We also want to include the time between last eyes time opened and now closed
                 # The assumption we are making is that if the eyes were previously opened and now are closed
@@ -180,6 +183,7 @@ class DrowsAnalyst:
                 self.timeEyesClosed += self.timeDiffInSec
                 drowsData['ETC'] = self.timeEyesClosed                        
                 self.calc_eyes_closed_stats() # User has opened the eyes it is time now to sum up statistics for when eyes were closed
+                drowsData['ETO'] = 0.0 # Restart eyes opened display counter
             elif (self.eyesClosed == False): # User has opened eyes and had them opened before
                 timeNow = dt.datetime.now()  # Get current time
                 self.timeDiffInSec = (timeNow - self.timeStartEyesOpen).microseconds / 1e6  # Increase the time eyes have been opened
@@ -200,6 +204,9 @@ class DrowsAnalyst:
 
         # Find if one minute sample was completed
         if (self.check_if_min_completed()):
+            # Call determine_drows_level again since now we have data we
+            # Have one minute statistic data that we can use for the determination
+            drowsData['DLEVEL'] = self.determine_drows_level()            
             # Minute completed so we want to calculate deltas
             drowsData['DBPM'] = self.currentBlinkCounter - self.prevBlinkCounter
             drowsData['DATCPM'] = self.currentSumEyesClosed - self.prevSumEyesClosed
@@ -218,7 +225,7 @@ class DrowsAnalyst:
             self.oneMinuteTimerStart = dt.datetime.now()
             self.minuteCompleted = False
 
-        # Return the image
+        # Return the image with marked eyelids
         return frame        
 
     def check_if_min_completed(self):
@@ -235,20 +242,53 @@ class DrowsAnalyst:
         return self.minuteCompleted
     
     def check_if_user_asleep(self, timeDiffInSec):
-        
-        if (timeDiffInSec >= self.ASLEEP_THRESH):
+        if (timeDiffInSec >= self.asleepThresh):
             self.isUserAsleep = True
+            # Mark the fact that user has fallen asleep at least once
+            # Don't set it more than once 
+            if (self.didUserFallAsleep == False):
+                self.didUserFallAsleep = True
         else:
             self.isUserAsleep = False
 
 
     def determine_drows_level(self):
+        drowsLevel = 'LOW'
         if (self.isUserAsleep):
-            return 'EXTREME'
+            drowsLevel = 'EXTREME'
+            self.prevDrowsLevel = 'EXTREME'
         else:
             # For now I will return LOW in any other case but in the end
-            # Here we need to have an algorithm that determines the drows level
-            return 'LOW'
+            # Determine if user has already previously fallen asleep if yes
+            # Then we mark drowsiness as HIGH
+            if (self.didUserFallAsleep == True):
+                drowsLevel = 'HIGH'
+                self.prevDrowsLevel = drowsLevel
+            # Otherwise we determine drows level based on max time of eyes closed in a minute interval
+            # And also previous drows level 
+            elif (self.minuteCompleted == True):
+                # One minute has completed so check the max time of eyes closed
+                # If max time of eyes closed is longer than 2 seconds mark the drows level as high
+                # And keep it there as long as the system is running
+                if (self.currentMaxEyesClosed >= 2.0):
+                    drowsLevel = 'HIGH'
+                    self.prevDrowsLevel =  drowsLevel
+                elif (self.currentMaxEyesClosed >= 1.0 and self.currentMaxEyesClosed <2.0):
+                    drowsLevel = 'MEDIUM'
+                    self.prevDrowsLevel = drowsLevel
+                # Verify that the user max eyes closed are ok for at least 2 minutes
+                # Before being able to transition from medium to low
+                # If at any poin the drows level was marked as high do not transition back to low
+                elif (self.currentMaxEyesClosed < 1.0 and self.prevMaxEyesClosed < 1.0 and self.prevDrowsLevel == 'MEDIUM'):
+                    drowsLevel = 'LOW'
+                    self.prevDrowsLevel = drowsLevel   
+                # If specified conditions are not matched simply return previous drows level
+                else:
+                    drowsLevel = self.prevDrowsLevel
+            else:
+                drowsLevel = self.prevDrowsLevel
+    
+        return drowsLevel
 
     def calc_eyes_closed_stats(self):
         self.currentSumEyesClosed += self.timeEyesClosed
@@ -261,6 +301,7 @@ class DrowsAnalyst:
 
 class SleepDetectorApp: 
     def __init__(self, tk_window, args):
+        print("Application starting")
         self.window = tk_window 
         # Set up variables used by the class
         # Map to convert drows level to color display
@@ -271,9 +312,11 @@ class SleepDetectorApp:
                               'ATCPM' : 0.0, 'DATCPM' : 0.0, 'MAXTCPM' : 0.0, 'MINTCPM' : 0.0, 'DLEVEL' : 'LOW'} 
         # Delay in miliseconds for how often image frame should be grabbed and calc performed
         self.delay = 10
-        # Store ear
-        self.EARThresh = 0.0
-        self.prevEARThresh = 0.0
+        # Store ear proivded by the GUI
+        self.earThresh = 0.0
+        self.prevEarThresh = 0.0
+        # Let's try
+        self.create_view()
         # Create video stream for getting images (controller)
         self.videoStream = VideoStream().start()
         # Create instance of drows utils used to analyze data
@@ -283,14 +326,15 @@ class SleepDetectorApp:
         # Give camera sensor time to warm up and music to be loaded
         time.sleep(1.0)
         # Create the view
-        self.create_view()
+        #self.create_view()
         # Call update function to start getting video frames
         self.update()
         # Start the app main loop
         self.window.mainloop()
-
+    
     def create_view(self):
         # Set up GUI elements    
+        print("Creating GUI elements")
         # Create main window and make it full screen
         self.window.attributes('-fullscreen', True)
         # Make the application quitable by pressing Escape key
@@ -390,7 +434,7 @@ class SleepDetectorApp:
         self.mintcpmLabel.place(x = 560, y = 350)
         self.mintcpmValue = tkinter.Label(self.window, font = self.dataTextFont, textvariable = self.mintcpm, anchor = tkinter.W, width = 8)
         self.mintcpmValue.place(x = 670, y = 350)
-    
+
     def read_ear(self):
         ear = 0.0
         try:
@@ -399,7 +443,7 @@ class SleepDetectorApp:
             print("Failed str to float conversion")
 
         if (ear != 0.0):
-            self.EARThresh = ear
+            self.earThresh = ear
 
     def update_view(self):
         self.drowsLevelFrame.config(bg = self.drowsLevelToDispColors[self.drowsData['DLEVEL']])
@@ -417,9 +461,12 @@ class SleepDetectorApp:
 
     def update(self):
          
-        if (self.EARThresh != 0.0 and np.isclose(self.EARThresh, self.prevEARThresh) == False):
-            self.drowsAnalyst.set_ear_thresh(self.EARThresh)
-            self.prevEARThresh = self.EARThresh
+        # If ear threshold received from the GUI is not zero and is different than the last threshold
+        # Provide new threshold to drows analyst
+        if (self.earThresh != 0.0 and np.isclose(self.earThresh, self.prevEarThresh) == False):
+            print("New thresh determined")
+            self.drowsAnalyst.set_ear_thresh(self.earThresh)
+            self.prevEarThresh = self.earThresh
             
         frame = self.videoStream.read()
         frame = self.drowsAnalyst.provide_drows_data(frame, self.drowsData)
@@ -435,7 +482,7 @@ class SleepDetectorApp:
         image = image.resize((300,300))
         self.photo = PIL.ImageTk.PhotoImage(image)
         self.videoOut.create_image(0, 0, image = self.photo, anchor = tkinter.NW)
-        # Make sure we keep getting the frames every 15 ms
+        # Make sure we keep getting the frames every 10 ms
         self.window.after(self.delay, self.update)
 
 
